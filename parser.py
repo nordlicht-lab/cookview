@@ -55,11 +55,24 @@ def iter_dicts(node: Any):
             yield from iter_dicts(item)
 
 
+def is_recipe_type(type_str: str) -> bool:
+    t = type_str.lower()
+    if t == "recipe":
+        return True
+    if t.endswith("/recipe"):
+        return True
+    if t.endswith(":recipe"):
+        return True
+    if "recipe" in t.split("/")[-1].split(":")[-1].lower():
+        return True
+    return False
+
+
 def extract_recipe_candidates(obj: Any) -> list[dict[str, Any]]:
     recipes: list[dict[str, Any]] = []
     for node in iter_dicts(obj):
         node_types = normalize_type(node.get("@type"))
-        if any("recipe" == t or t.endswith("recipe") for t in node_types):
+        if any(is_recipe_type(t) for t in node_types):
             recipes.append(node)
     return recipes
 
@@ -122,15 +135,30 @@ def select_best_recipe(candidates: list[dict[str, Any]]) -> dict[str, Any] | Non
     )
 
 
+def clean_json_ld_content(raw: str) -> str:
+    content = raw.strip()
+    if content.startswith("<!--"):
+        content = re.sub(r"^<!--\s*", "", content)
+        content = re.sub(r"\s*-->$", "", content)
+    if content.startswith("//<![CDATA["):
+        content = re.sub(r"^//\s*<!\[CDATA\[\s*", "", content)
+        content = re.sub(r"\s*//\s*\]\]>$", "", content)
+    if content.startswith("<![CDATA["):
+        content = re.sub(r"^<!\[CDATA\[\s*", "", content)
+        content = re.sub(r"\s*\]\]>$", "", content)
+    return content.strip()
+
+
 def extract_recipe_from_html(html_text: str, source_url: str) -> dict[str, Any]:
     soup = BeautifulSoup(html_text, "html.parser")
-    scripts = soup.find_all("script", attrs={"type": "application/ld+json"})
+    scripts = soup.find_all("script", attrs={"type": re.compile(r"application/ld\+json", re.IGNORECASE)})
 
     recipe_candidates: list[dict[str, Any]] = []
     for script in scripts:
         raw = (script.string or script.text or "").strip()
         if not raw:
             continue
+        raw = clean_json_ld_content(raw)
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
